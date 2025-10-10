@@ -1,0 +1,145 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums define a set of allowed values for a field.
+enum Role {
+  LEARNER
+  ISSUER
+  VERIFIER
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum AccessStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+enum VerificationSource {
+  API_PULL
+  ISSUER_PUSH
+  DIGILOCKER
+}
+
+// Central model for all users on the platform.
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String // Stores the hashed password, NOT the plain text
+  fullName  String?
+  role      Role     @default(LEARNER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One-to-one relations to specific profile types
+  learnerProfile  LearnerProfile?
+  issuerProfile   IssuerProfile?
+  verifierProfile VerifierProfile?
+
+  // One-to-many relations
+  // A user can have many credentials as a learner
+  credentialsAsLearner Credential[] @relation("LearnerCredentials")
+  // A user (as an issuer) can issue many credentials
+  credentialsAsIssuer  Credential[] @relation("IssuerCredentials")
+  // A user (as a verifier) can send many access requests
+  sentAccessRequests   AccessRequest[] @relation("SentRequests")
+  // A user (as a learner) can receive many access requests
+  receivedAccessRequests AccessRequest[] @relation("ReceivedRequests")
+}
+
+// Profile specific to Learners
+model LearnerProfile {
+  id                String  @id @default(cuid())
+  headline          String?
+  about             String?
+  profilePictureUrl String?
+  uniqueShareLink   String  @unique
+
+  // One-to-one relation back to the User model
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+}
+
+// Profile specific to Issuers (Institutions, Companies)
+model IssuerProfile {
+  id                 String             @id @default(cuid())
+  organizationName   String
+  websiteUrl         String?
+  verificationStatus VerificationStatus @default(PENDING)
+  apiKey             String?            @unique 
+
+  // One-to-one relation back to the User model
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+}
+
+// Profile specific to Verifiers (Employers)
+model VerifierProfile {
+  id                 String             @id @default(cuid())
+  companyName        String
+  jobTitle           String?
+  verificationStatus VerificationStatus @default(PENDING)
+
+  // One-to-one relation back to the User model
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+}
+
+// This is the "bridge" model in PostgreSQL. It holds metadata for credentials.
+model Credential {
+  id                String             @id @default(cuid())
+  title             String
+  mongodbDocumentId String             @unique // Link to the detailed document in MongoDB
+  issuedOn          DateTime
+  nsqfLevel         String?
+  verificationSource VerificationSource
+
+  // Many-to-one relation to the Learner (a User)
+  learner   User   @relation("LearnerCredentials", fields: [learnerId], references: [id], onDelete: Cascade)
+  learnerId String
+
+  // Many-to-one relation to the Issuer (a User)
+  issuer   User   @relation("IssuerCredentials", fields: [issuerId], references: [id], onDelete: Cascade)
+  issuerId String
+
+  @@index([learnerId])
+  @@index([issuerId])
+}
+
+// Model to track access requests from Verifiers to Learners
+model AccessRequest {
+  id        String       @id @default(cuid())
+  status    AccessStatus @default(PENDING)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Many-to-one relation for the Verifier who sent the request
+  verifier   User   @relation("SentRequests", fields: [verifierId], references: [id], onDelete: Cascade)
+  verifierId String
+
+  // Many-to-one relation for the Learner who received the request
+  learner   User   @relation("ReceivedRequests", fields: [learnerId], references: [id], onDelete: Cascade)
+  learnerId String
+
+  @@index([verifierId])
+  @@index([learnerId])
+}
